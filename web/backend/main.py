@@ -92,6 +92,56 @@ async def health():
     return {"status": "ok", "engine": "proxy_checker_v2", "version": "1.0.0"}
 
 
+@app.post("/api/test-one")
+async def test_one(payload: dict):
+    """Prueba rápida de UN solo proxy (vida + anonimato + país + score)."""
+    proxy_str = (payload or {}).get("proxy", "").strip()
+    deep = bool((payload or {}).get("deep", False))
+    proxies = parse_pasted(proxy_str)
+    if not proxies:
+        return {"ok": False, "error": "Formato inválido. Usa ip:puerto (opcional socks5://)"}
+
+    # Tomar solo el primero
+    addr = next(iter(proxies))
+    one = {addr: proxies[addr]}
+    targets = ["google.com", "cloudflare"] if deep else []
+    engine.Config.MAX_CONCURRENT = 5
+    stats = engine.Stats()
+    checker = engine.ProxyChecker(stats, test_targets=targets)
+    await checker.check_all(one)
+
+    if checker.results:
+        r = checker.results[0]
+        return {"ok": True, "alive": True, "result": r.to_dict()}
+    return {"ok": True, "alive": False, "address": addr}
+
+
+@app.post("/api/clean")
+async def clean_list(payload: dict):
+    """Limpia, normaliza y deduplica una lista de proxies pegada."""
+    text = (payload or {}).get("text", "")
+    raw_lines = [l for l in text.splitlines() if l.strip() and not l.strip().startswith("#")]
+    proxies = parse_pasted(text)  # dedupe vía dict + validación de IP/puerto
+
+    by_protocol = {}
+    plain = []
+    prefixed = []
+    for addr, proto in proxies.items():
+        by_protocol[proto.value] = by_protocol.get(proto.value, 0) + 1
+        plain.append(addr)
+        prefixed.append(f"{proto.value}://{addr}")
+
+    return {
+        "ok": True,
+        "input_lines": len(raw_lines),
+        "valid": len(proxies),
+        "removed": max(0, len(raw_lines) - len(proxies)),
+        "by_protocol": by_protocol,
+        "plain": plain,
+        "prefixed": prefixed,
+    }
+
+
 @app.websocket("/api/ws/check")
 async def ws_check(ws: WebSocket):
     await ws.accept()
