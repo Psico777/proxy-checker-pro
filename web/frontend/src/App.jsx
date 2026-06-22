@@ -5,6 +5,9 @@
 import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import QuickTest from './QuickTest.jsx';
 import CleanList from './CleanList.jsx';
+import Dashboard from './Dashboard.jsx';
+import Vault from './Vault.jsx';
+import Guide from './Guide.jsx';
 
 const SOURCES = [
   { v: 'all', label: '🌐 Todas las fuentes (~20k)' },
@@ -57,7 +60,34 @@ export default function App() {
   const [search, setSearch] = useState('');
 
   const [tab, setTab] = useState('checker');
+  const [vault, setVault] = useState([]);
+  const [savedMsg, setSavedMsg] = useState('');
   const wsRef = useRef(null);
+
+  const reloadVault = useCallback(async () => {
+    try {
+      const r = await fetch('/api/vault');
+      const d = await r.json();
+      setVault(d.proxies || []);
+    } catch {}
+  }, []);
+
+  useEffect(() => { reloadVault(); }, [reloadVault]);
+
+  const saveToVault = useCallback(async (proxies) => {
+    const list = Array.isArray(proxies) ? proxies : [proxies];
+    if (!list.length) return;
+    try {
+      const r = await fetch('/api/vault', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ proxies: list }),
+      });
+      const d = await r.json();
+      setVault(d.proxies || []);
+      setSavedMsg(`✓ ${d.added} guardada(s) en el baúl`);
+      setTimeout(() => setSavedMsg(''), 2500);
+    } catch {}
+  }, []);
 
   const start = useCallback(() => {
     setResults([]);
@@ -162,6 +192,7 @@ export default function App() {
         <div className="header-stats">
           <div className="hstat"><span>{progress.alive}</span><label>vivas</label></div>
           <div className="hstat"><span>{progress.speed}</span><label>p/s</label></div>
+          <div className="hstat"><span>{vault.length}</span><label>baúl</label></div>
         </div>
       </header>
 
@@ -169,11 +200,17 @@ export default function App() {
         <button className={tab === 'checker' ? 'tab on' : 'tab'} onClick={() => setTab('checker')}>🔍 Checker masivo</button>
         <button className={tab === 'quick' ? 'tab on' : 'tab'} onClick={() => setTab('quick')}>⚡ Test rápido</button>
         <button className={tab === 'clean' ? 'tab on' : 'tab'} onClick={() => setTab('clean')}>🧹 Limpiar lista</button>
+        <button className={tab === 'dashboard' ? 'tab on' : 'tab'} onClick={() => setTab('dashboard')}>📊 Dashboard</button>
+        <button className={tab === 'vault' ? 'tab on' : 'tab'} onClick={() => setTab('vault')}>🗄️ Baúl</button>
+        <button className={tab === 'guide' ? 'tab on' : 'tab'} onClick={() => setTab('guide')}>📖 Guía</button>
       </nav>
 
       <main className="main">
-        {tab === 'quick' && <QuickTest />}
+        {tab === 'quick' && <QuickTest onSave={saveToVault} />}
         {tab === 'clean' && <CleanList />}
+        {tab === 'dashboard' && <Dashboard results={results} />}
+        {tab === 'vault' && <Vault vault={vault} reloadVault={reloadVault} />}
+        {tab === 'guide' && <Guide />}
 
         {tab === 'checker' && <>
         {/* Config panel */}
@@ -269,6 +306,8 @@ export default function App() {
                 <button className="btn-sm" onClick={exportTxt}>TXT</button>
                 <button className="btn-sm" onClick={exportCsv}>CSV</button>
                 <button className="btn-sm" onClick={exportJson}>JSON</button>
+                <button className="btn-sm save" onClick={() => saveToVault(filtered)}>🗄️ Guardar al baúl</button>
+                {savedMsg && <span className="saved-msg">{savedMsg}</span>}
               </div>
             </div>
 

@@ -8,12 +8,13 @@ const QUALITY_COLORS = {
   '🟡 MEDIUM': '#f59e0b', '🔴 LOW': '#ef4444',
 };
 
-export default function QuickTest() {
+export default function QuickTest({ onSave }) {
   const [proxy, setProxy] = useState('');
   const [deep, setDeep] = useState(true);
   const [loading, setLoading] = useState(false);
   const [res, setRes] = useState(null);
   const [err, setErr] = useState('');
+  const [saved, setSaved] = useState(false);
 
   const run = async () => {
     if (!proxy.trim()) return;
@@ -63,7 +64,14 @@ export default function QuickTest() {
         <div className="result-card alive">
           <div className="rc-head">
             <span className="big-status">✅ Proxy vivo</span>
-            <span className="score-big" style={{ background: `hsl(${Math.min(res.result.score,100)*1.2},70%,45%)` }}>{res.result.score}/100</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              {onSave && (
+                <button className="btn-sm save" onClick={() => { onSave(res.result); setSaved(true); setTimeout(() => setSaved(false), 2000); }}>
+                  {saved ? '✓ Guardado' : '🗄️ Guardar al baúl'}
+                </button>
+              )}
+              <span className="score-big" style={{ background: `hsl(${Math.min(res.result.score,100)*1.2},70%,45%)` }}>{res.result.score}/100</span>
+            </div>
           </div>
           <div className="rc-grid">
             <div><label>Dirección</label><span className="mono">{res.result.address}</span></div>
