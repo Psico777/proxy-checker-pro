@@ -24,13 +24,22 @@ ENGINE_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ENGINE_DIR))
 import proxy_checker_v2 as engine  # noqa: E402
 
-app = FastAPI(title="Proxy Checker Pro - Web", version="1.1.0")
+app = FastAPI(title="Proxy Checker Pro - Web", version="1.4.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Token de admin (si está vacío, el panel admin queda abierto = solo uso local)
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
+
+
+async def require_admin(x_admin_token: str = Header(None)):
+    if ADMIN_TOKEN and x_admin_token != ADMIN_TOKEN:
+        raise HTTPException(403, "Token de admin inválido")
+    return True
 
 # ══════════════════════════════════════════════════════════════
 #   BAÚL DE PROXIES (persistencia SQLite)
@@ -66,9 +75,37 @@ def init_vault():
                 last_used TEXT
             )
         """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                k TEXT PRIMARY KEY,
+                v TEXT
+            )
+        """)
+        # ── Migraciones (columnas nuevas) ──
+        def addcol(table, col, ddl):
+            cols = [r["name"] for r in c.execute(f"PRAGMA table_info({table})").fetchall()]
+            if col not in cols:
+                c.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+        addcol("api_keys", "rate_limit", "rate_limit INTEGER DEFAULT 0")       # req/día (0 = ilimitado)
+        addcol("api_keys", "requests_today", "requests_today INTEGER DEFAULT 0")
+        addcol("api_keys", "day", "day TEXT DEFAULT ''")
+        addcol("vault", "checks", "checks INTEGER DEFAULT 0")
+        addcol("vault", "fails", "fails INTEGER DEFAULT 0")
+        addcol("vault", "last_check", "last_check TEXT DEFAULT ''")
 
 
 init_vault()
+
+
+def _get_setting(k, default=None):
+    with _db() as c:
+        row = c.execute("SELECT v FROM settings WHERE k=?", (k,)).fetchone()
+    return row["v"] if row else default
+
+
+def _set_setting(k, v):
+    with _db() as c:
+        c.execute("INSERT INTO settings (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v=?", (k, str(v), str(v)))
 
 
 def _key_to_dict(row, mask=False):
@@ -79,21 +116,39 @@ def _key_to_dict(row, mask=False):
     return d
 
 
+class RateLimited(Exception):
+    pass
+
+
 def validate_key(k: str):
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    now = datetime.now(timezone.utc).isoformat()
     with _db() as c:
         row = c.execute("SELECT * FROM api_keys WHERE key=? AND active=1", (k,)).fetchone()
-        if row:
-            c.execute("UPDATE api_keys SET requests=requests+1, last_used=? WHERE id=?",
-                      (datetime.now(timezone.utc).isoformat(), row["id"]))
-            return dict(row)
-    return None
+        if not row:
+            return None
+        d = dict(row)
+        # Reset diario del contador
+        used_today = d.get("requests_today", 0) if d.get("day") == today else 0
+        limit = d.get("rate_limit", 0) or 0
+        if limit and used_today >= limit:
+            raise RateLimited()
+        c.execute(
+            "UPDATE api_keys SET requests=requests+1, requests_today=?, day=?, last_used=? WHERE id=?",
+            (used_today + 1, today, now, d["id"]),
+        )
+        d["requests_today"] = used_today + 1
+        return d
 
 
 async def require_key(x_api_key: str = Header(None), key: str = Query(None)):
     k = x_api_key or key
     if not k:
         raise HTTPException(401, "API key requerida (header 'X-API-Key' o ?key=...)")
-    row = validate_key(k)
+    try:
+        row = validate_key(k)
+    except RateLimited:
+        raise HTTPException(429, "Límite diario de la API key alcanzado")
     if not row:
         raise HTTPException(403, "API key inválida o revocada")
     return row
@@ -265,17 +320,14 @@ async def vault_delete(pid: int):
 
 
 @app.delete("/api/vault")
-async def vault_clear():
+async def vault_clear(_: bool = Depends(require_admin)):
     with _db() as c:
         c.execute("DELETE FROM vault")
     return {"ok": True, "total": 0}
 
 
-@app.post("/api/vault/refresh")
-async def vault_refresh(payload: dict = None):
-    """Escaneo rápido (APIs, solo vida) y agrega las vivas al baúl. Mantiene el rotador fresco."""
-    payload = payload or {}
-    limit = int(payload.get("limit", 600))
+async def _do_refresh(limit: int = 600) -> dict:
+    """Escaneo rápido (APIs, solo vida) y agrega las vivas al baúl."""
     engine.Config.MAX_CONCURRENT = 500
     proxies = await fetch_proxies("api")
     if limit and limit < len(proxies):
@@ -302,6 +354,124 @@ async def vault_refresh(payload: dict = None):
             except Exception:
                 continue
     return {"ok": True, "checked": stats.checked, "alive": stats.alive, "added": added, "total": len(_vault_rows())}
+
+
+@app.post("/api/vault/refresh")
+async def vault_refresh(payload: dict = None, _: bool = Depends(require_admin)):
+    payload = payload or {}
+    return await _do_refresh(int(payload.get("limit", 600)))
+
+
+async def _do_verify(prune: bool = True) -> dict:
+    """Re-verifica los proxies del baúl: actualiza uptime/score y elimina los muertos."""
+    rows = _vault_rows()
+    if not rows:
+        return {"ok": True, "checked": 0, "alive": 0, "removed": 0, "total": 0}
+    proxies = {}
+    for r in rows:
+        proto = r["protocol"]
+        try:
+            proxies[r["address"]] = engine.ProxyProtocol(proto)
+        except Exception:
+            proxies[r["address"]] = engine.ProxyProtocol.HTTP
+    engine.Config.MAX_CONCURRENT = 300
+    stats = engine.Stats()
+    checker = engine.ProxyChecker(stats, test_targets=[])
+    await checker.check_all(proxies)
+    alive_map = {res.address: res.to_dict() for res in checker.results}
+    now = datetime.now(timezone.utc).isoformat()
+    removed = 0
+    with _db() as c:
+        for r in rows:
+            addr = r["address"]
+            checks = (r.get("checks") or 0) + 1
+            if addr in alive_map:
+                d = alive_map[addr]
+                c.execute(
+                    "UPDATE vault SET score=?, latency_ms=?, anon_level=?, quality=?, checks=?, last_check=? WHERE id=?",
+                    (d["score"], d["latency_ms"], d["anon_level"], d["quality"], checks, now, r["id"]),
+                )
+            else:
+                fails = (r.get("fails") or 0) + 1
+                if prune:
+                    c.execute("DELETE FROM vault WHERE id=?", (r["id"],))
+                    removed += 1
+                else:
+                    c.execute("UPDATE vault SET fails=?, checks=?, last_check=? WHERE id=?",
+                              (fails, checks, now, r["id"]))
+    return {"ok": True, "checked": len(rows), "alive": len(alive_map), "removed": removed, "total": len(_vault_rows())}
+
+
+@app.post("/api/vault/verify")
+async def vault_verify(payload: dict = None, _: bool = Depends(require_admin)):
+    payload = payload or {}
+    return await _do_verify(prune=bool(payload.get("prune", True)))
+
+
+# ══════════════════════════════════════════════════════════════
+#   SCHEDULER — auto-refresh del baúl en segundo plano
+# ══════════════════════════════════════════════════════════════
+_scheduler_task = None
+_scheduler_state = {"running": False, "last_run": None, "last_result": None}
+
+
+async def _scheduler_loop():
+    _scheduler_state["running"] = True
+    try:
+        while _get_setting("sched_enabled", "0") == "1":
+            interval = int(_get_setting("sched_interval", "30"))
+            try:
+                res = await _do_refresh(int(_get_setting("sched_limit", "600")))
+                if _get_setting("sched_verify", "1") == "1":
+                    await _do_verify(prune=True)
+                _scheduler_state["last_run"] = datetime.now(timezone.utc).isoformat()
+                _scheduler_state["last_result"] = res
+            except Exception as e:
+                _scheduler_state["last_result"] = {"error": str(e)}
+            for _ in range(max(1, interval) * 60):
+                if _get_setting("sched_enabled", "0") != "1":
+                    break
+                await asyncio.sleep(1)
+    finally:
+        _scheduler_state["running"] = False
+
+
+def _ensure_scheduler():
+    global _scheduler_task
+    if _get_setting("sched_enabled", "0") == "1" and (_scheduler_task is None or _scheduler_task.done()):
+        _scheduler_task = asyncio.create_task(_scheduler_loop())
+
+
+@app.on_event("startup")
+async def _on_startup():
+    _ensure_scheduler()
+
+
+@app.get("/api/scheduler")
+async def scheduler_status():
+    return {
+        "enabled": _get_setting("sched_enabled", "0") == "1",
+        "interval": int(_get_setting("sched_interval", "30")),
+        "limit": int(_get_setting("sched_limit", "600")),
+        "verify": _get_setting("sched_verify", "1") == "1",
+        "running": _scheduler_state["running"],
+        "last_run": _scheduler_state["last_run"],
+        "last_result": _scheduler_state["last_result"],
+    }
+
+
+@app.post("/api/scheduler")
+async def scheduler_set(payload: dict, _: bool = Depends(require_admin)):
+    if "enabled" in payload:
+        _set_setting("sched_enabled", "1" if payload["enabled"] else "0")
+    if "interval" in payload:
+        _set_setting("sched_interval", max(1, int(payload["interval"])))
+    if "limit" in payload:
+        _set_setting("sched_limit", max(100, int(payload["limit"])))
+    if "verify" in payload:
+        _set_setting("sched_verify", "1" if payload["verify"] else "0")
+    _ensure_scheduler()
+    return await scheduler_status()
 
 
 # ══════════════════════════════════════════════════════════════
@@ -345,31 +515,33 @@ async def rotate_proxy(
 #   API KEYS (panel admin — protégelo antes de exponer en producción)
 # ══════════════════════════════════════════════════════════════
 @app.get("/api/keys")
-async def keys_list():
+async def keys_list(_: bool = Depends(require_admin)):
     with _db() as c:
         rows = c.execute("SELECT * FROM api_keys ORDER BY created_at DESC").fetchall()
-    return {"keys": [dict(r) for r in rows]}
+    return {"keys": [dict(r) for r in rows], "admin_required": bool(ADMIN_TOKEN)}
 
 
 @app.post("/api/keys")
-async def keys_create(payload: dict = None):
+async def keys_create(payload: dict = None, _: bool = Depends(require_admin)):
     label = (payload or {}).get("label", "").strip() or "sin nombre"
+    rate_limit = int((payload or {}).get("rate_limit", 0) or 0)
     new_key = "pck_" + secrets.token_urlsafe(24)
     now = datetime.now(timezone.utc).isoformat()
     with _db() as c:
-        c.execute("INSERT INTO api_keys (key, label, created_at) VALUES (?,?,?)", (new_key, label, now))
-    return {"ok": True, "key": new_key, "label": label}
+        c.execute("INSERT INTO api_keys (key, label, rate_limit, created_at) VALUES (?,?,?,?)",
+                  (new_key, label, rate_limit, now))
+    return {"ok": True, "key": new_key, "label": label, "rate_limit": rate_limit}
 
 
 @app.delete("/api/keys/{kid}")
-async def keys_delete(kid: int):
+async def keys_delete(kid: int, _: bool = Depends(require_admin)):
     with _db() as c:
         c.execute("DELETE FROM api_keys WHERE id=?", (kid,))
     return {"ok": True}
 
 
 @app.post("/api/keys/{kid}/toggle")
-async def keys_toggle(kid: int):
+async def keys_toggle(kid: int, _: bool = Depends(require_admin)):
     with _db() as c:
         row = c.execute("SELECT active FROM api_keys WHERE id=?", (kid,)).fetchone()
         if not row:

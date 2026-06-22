@@ -2,8 +2,9 @@
  * Rotador en vivo — endpoint que entrega una proxy fresca por petición.
  */
 import React, { useState, useMemo, useCallback } from 'react';
+import { IcRotate, IcRefresh, IcCopy } from './Icons.jsx';
 
-export default function Rotator({ keys, vaultCount, reloadVault }) {
+export default function Rotator({ keys, vaultCount, reloadVault, adminHeaders }) {
   const activeKeys = keys.filter((k) => k.active);
   const [selKey, setSelKey] = useState('');
   const [protocol, setProtocol] = useState('');
@@ -40,14 +41,15 @@ export default function Rotator({ keys, vaultCount, reloadVault }) {
     setRefreshing(true); setRefreshMsg('');
     try {
       const r = await fetch('/api/vault/refresh', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limit: 600 }),
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...(adminHeaders || {}) }, body: JSON.stringify({ limit: 600 }),
       });
+      if (r.status === 403) { setRefreshMsg('Token de admin requerido'); return; }
       const d = await r.json();
-      setRefreshMsg(`✓ ${d.alive} vivas (${d.added} nuevas) · baúl: ${d.total}`);
+      setRefreshMsg(`${d.alive} vivas (${d.added} nuevas) · baúl: ${d.total}`);
       reloadVault?.();
     } catch (e) { setRefreshMsg('Error: ' + e.message); }
     finally { setRefreshing(false); }
-  }, [reloadVault]);
+  }, [reloadVault, adminHeaders]);
 
   const snippets = {
     cURL: `curl "${fullUrl}"`,
@@ -59,7 +61,7 @@ proxy = r.json()["proxy"]   # ej: socks5://1.2.3.4:1080`,
 
   return (
     <section className="panel">
-      <h2 className="tool-title">🔄 Rotador en vivo</h2>
+      <h2 className="tool-title"><IcRotate size={20} /> Rotador en vivo</h2>
       <p className="tool-desc">
         Un endpoint que entrega <b>una proxy distinta en cada petición</b> (round-robin) desde tu baúl.
         Ideal para scrapers y bots — y para <b>vender acceso</b> con API keys.
@@ -94,9 +96,9 @@ proxy = r.json()["proxy"]   # ej: socks5://1.2.3.4:1080`,
       </div>
 
       <div className="actions">
-        <button className="btn btn-start" onClick={getNext}>🔄 Obtener siguiente</button>
+        <button className="btn btn-start" onClick={getNext}><IcRotate size={16} /> Obtener siguiente</button>
         <button className="btn-sm" onClick={refresh} disabled={refreshing}>
-          {refreshing ? 'Refrescando baúl...' : '⟳ Refrescar baúl (escaneo rápido)'}
+          <IcRefresh size={13} /> {refreshing ? 'Refrescando baúl...' : 'Refrescar baúl (escaneo rápido)'}
         </button>
         <span className="status">Baúl: {vaultCount} proxies {refreshMsg && `· ${refreshMsg}`}</span>
       </div>
@@ -106,7 +108,7 @@ proxy = r.json()["proxy"]   # ej: socks5://1.2.3.4:1080`,
       {last && (
         <div className="result-card alive" style={{ marginTop: 16 }}>
           <div className="rc-head">
-            <span className="big-status">🔄 {last.proxy}</span>
+            <span className="big-status mono">{last.proxy}</span>
             <span className="score-big" style={{ background: `hsl(${Math.min(last.score,100)*1.2},70%,45%)` }}>{last.score}</span>
           </div>
           <div className="rc-grid">
@@ -120,7 +122,7 @@ proxy = r.json()["proxy"]   # ej: socks5://1.2.3.4:1080`,
         </div>
       )}
 
-      <h3 className="guide-h" style={{ marginTop: 24 }}>🧩 Cómo lo usa tu cliente</h3>
+      <h3 className="guide-h" style={{ marginTop: 24 }}>Cómo lo usa tu cliente</h3>
       {Object.entries(snippets).map(([name, code]) => (
         <div className="code-block" key={name}>
           <div className="code-head">{name}</div>
