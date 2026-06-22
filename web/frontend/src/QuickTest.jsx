@@ -2,11 +2,10 @@
  * Test rápido de UN proxy.
  */
 import React, { useState } from 'react';
+import { IcZap, IcArchive, IcCheck } from './Icons.jsx';
 
-const QUALITY_COLORS = {
-  '⭐ PREMIUM': '#10b981', '🟢 HIGH': '#3b82f6',
-  '🟡 MEDIUM': '#f59e0b', '🔴 LOW': '#ef4444',
-};
+const QUALITY_COLORS = { PREMIUM: '#10b981', HIGH: '#3b82f6', MEDIUM: '#f59e0b', LOW: '#ef4444' };
+const cleanQ = (q) => (q || '').replace(/[^A-Za-z ]/g, '').trim();
 
 export default function QuickTest({ onSave }) {
   const [proxy, setProxy] = useState('');
@@ -35,7 +34,7 @@ export default function QuickTest({ onSave }) {
 
   return (
     <section className="panel">
-      <h2 className="tool-title">⚡ Test rápido de un proxy</h2>
+      <h2 className="tool-title"><IcZap size={20} /> Test rápido de un proxy</h2>
       <p className="tool-desc">Verifica al instante si un proxy funciona, su latencia, anonimato y país.</p>
 
       <div className="quick-row">
@@ -50,11 +49,11 @@ export default function QuickTest({ onSave }) {
         Test profundo (Google + Cloudflare) — más lento pero más confiable
       </label>
 
-      {err && <div className="tool-error">❌ {err}</div>}
+      {err && <div className="tool-error">{err}</div>}
 
       {res && !res.alive && (
         <div className="result-card dead">
-          <span className="big-status">❌ Proxy muerto</span>
+          <span className="big-status">Proxy muerto</span>
           <span className="mono">{res.address}</span>
           <p>No respondió o no pasó la verificación.</p>
         </div>
@@ -63,11 +62,11 @@ export default function QuickTest({ onSave }) {
       {res && res.alive && res.result && (
         <div className="result-card alive">
           <div className="rc-head">
-            <span className="big-status">✅ Proxy vivo</span>
+            <span className="big-status">Proxy vivo</span>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               {onSave && (
                 <button className="btn-sm save" onClick={() => { onSave(res.result); setSaved(true); setTimeout(() => setSaved(false), 2000); }}>
-                  {saved ? '✓ Guardado' : '🗄️ Guardar al baúl'}
+                  {saved ? <><IcCheck size={13} /> Guardado</> : <><IcArchive size={13} /> Guardar al baúl</>}
                 </button>
               )}
               <span className="score-big" style={{ background: `hsl(${Math.min(res.result.score,100)*1.2},70%,45%)` }}>{res.result.score}/100</span>
@@ -76,7 +75,7 @@ export default function QuickTest({ onSave }) {
           <div className="rc-grid">
             <div><label>Dirección</label><span className="mono">{res.result.address}</span></div>
             <div><label>Protocolo</label><span className="proto-tag">{res.result.protocol}</span></div>
-            <div><label>Calidad</label><span style={{ color: QUALITY_COLORS[res.result.quality] }}>{res.result.quality}</span></div>
+            <div><label>Calidad</label><span style={{ color: QUALITY_COLORS[cleanQ(res.result.quality)] }}>{cleanQ(res.result.quality)}</span></div>
             <div><label>Anonimato</label><span>{res.result.anon_level}</span></div>
             <div><label>País</label><span>{res.result.country} {res.result.country_name && `· ${res.result.country_name}`}</span></div>
             <div><label>Latencia</label><span className="mono">{Math.round(res.result.latency_ms)}ms</span></div>

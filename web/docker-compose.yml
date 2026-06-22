@@ -1,0 +1,16 @@
+services:
+  proxy-checker:
+    build:
+      context: ..
+      dockerfile: web/Dockerfile
+    image: proxy-checker-pro
+    container_name: proxy-checker-pro
+    ports:
+      - "8000:8000"
+    environment:
+      # ⚠️ Cambia esto por un token largo y secreto antes de exponer en internet
+      ADMIN_TOKEN: "cambia-esto-por-un-token-secreto"
+    volumes:
+      # Persiste el baúl y las API keys fuera del contenedor
+      - ./data:/app/web/backend
+    restart: unless-stopped

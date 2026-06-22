@@ -60,9 +60,9 @@ export default function Dashboard({ results }) {
   if (!results.length) {
     return (
       <section className="panel">
-        <h2 className="tool-title">📊 Dashboard</h2>
-        <p className="tool-desc">Corre una verificación en <b>Checker masivo</b> y aquí verás las estadísticas: protocolos, calidad, países y anonimato.</p>
-        <div className="empty-dash">📊<br />Sin datos todavía</div>
+        <h2 className="tool-title">Dashboard</h2>
+        <p className="tool-desc">Corre una verificación en <b>Checker</b> y aquí verás las estadísticas: protocolos, calidad, países y anonimato.</p>
+        <div className="empty-dash">Sin datos todavía<br /><span>Ejecuta un escaneo primero</span></div>
       </section>
     );
   }
@@ -73,7 +73,7 @@ export default function Dashboard({ results }) {
 
   return (
     <section className="panel">
-      <h2 className="tool-title">📊 Dashboard del último escaneo</h2>
+      <h2 className="tool-title">Dashboard del último escaneo</h2>
 
       <div className="kpi-grid">
         <div className="kpi kpi-main"><span>{stats.n}</span><label>Proxies vivas</label></div>

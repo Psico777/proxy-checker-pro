@@ -26,6 +26,7 @@ web/frontend/dist/
 
 # Vault DB (datos locales del usuario)
 web/backend/vault.db
+web/data/
 
 # IDE / OS
 .vscode/
@@ -35,3 +36,4 @@ Thumbs.db
 .playwright-mcp/
 pc-*.png
 _commitmsg.txt
+_cm.txt

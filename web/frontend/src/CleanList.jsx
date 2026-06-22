@@ -36,7 +36,7 @@ export default function CleanList() {
 
   return (
     <section className="panel">
-      <h2 className="tool-title">🧹 Limpiar y deduplicar lista</h2>
+      <h2 className="tool-title">Limpiar y deduplicar lista</h2>
       <p className="tool-desc">Pega una lista desordenada (con texto basura, duplicados, IPs inválidas) y obtén una lista limpia.</p>
 
       <textarea className="clean-input" rows={8} value={text} disabled={loading}
