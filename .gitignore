@@ -34,3 +34,4 @@ web/backend/vault.db
 Thumbs.db
 .playwright-mcp/
 pc-*.png
+_commitmsg.txt
