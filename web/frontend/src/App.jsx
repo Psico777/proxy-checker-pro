@@ -3,6 +3,8 @@
  * Verificación de proxies en vivo vía WebSocket.
  */
 import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
+import QuickTest from './QuickTest.jsx';
+import CleanList from './CleanList.jsx';
 
 const SOURCES = [
   { v: 'all', label: '🌐 Todas las fuentes (~20k)' },
@@ -54,6 +56,7 @@ export default function App() {
   const [fCountry, setFCountry] = useState('all');
   const [search, setSearch] = useState('');
 
+  const [tab, setTab] = useState('checker');
   const wsRef = useRef(null);
 
   const start = useCallback(() => {
@@ -162,7 +165,17 @@ export default function App() {
         </div>
       </header>
 
+      <nav className="tabs">
+        <button className={tab === 'checker' ? 'tab on' : 'tab'} onClick={() => setTab('checker')}>🔍 Checker masivo</button>
+        <button className={tab === 'quick' ? 'tab on' : 'tab'} onClick={() => setTab('quick')}>⚡ Test rápido</button>
+        <button className={tab === 'clean' ? 'tab on' : 'tab'} onClick={() => setTab('clean')}>🧹 Limpiar lista</button>
+      </nav>
+
       <main className="main">
+        {tab === 'quick' && <QuickTest />}
+        {tab === 'clean' && <CleanList />}
+
+        {tab === 'checker' && <>
         {/* Config panel */}
         <section className="panel config-panel">
           <div className="config-grid">
@@ -285,6 +298,7 @@ export default function App() {
             </div>
           </section>
         )}
+        </>}
       </main>
 
       <footer className="footer">
