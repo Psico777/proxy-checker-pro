@@ -114,7 +114,17 @@ cd web/frontend && npm run build                 # luego abre http://localhost:8
 - 🧹 **Limpiar lista** — deduplica, valida IPs y normaliza formato de listas desordenadas
 - 📊 **Dashboard** — KPIs y gráficos (por protocolo, calidad, top países, anonimato)
 - 🗄️ **Baúl** — guarda tus mejores proxies de forma persistente (SQLite) y reúsalas / expórtalas
+- 🔄 **Rotador en vivo** — endpoint `GET /api/proxy` que entrega una proxy distinta por petición (round-robin, con filtros) — ideal para scrapers
+- 🔑 **API Keys** — genera/revoca keys por cliente y **vende acceso** a tu API de proxies (gating + contador de uso)
 - 📖 **Guía** — qué es, para qué sirve, qué proxy usar y cómo integrarlas (cURL/Python/Scrapy)
+
+### 💰 Monetización (API de proxies)
+1. Corre el Checker y guarda las mejores al Baúl (o usa "Refrescar baúl")
+2. Crea una API key por cliente en la pestaña **API Keys**
+3. El cliente consume tu rotador: `GET /api/proxy?key=SU_KEY&protocol=socks5&min_score=60`
+4. Pausa o revoca el acceso cuando quieras; mira el contador de uso por key
+
+> ⚠️ Antes de exponer en internet, protege los endpoints `/api/keys*` (panel admin) con autenticación.
 
 - **Backend FastAPI** que reutiliza el mismo motor (`proxy_checker_v2.py`)
 - Tema oscuro profesional · React 19 + Vite
