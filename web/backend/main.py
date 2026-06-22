@@ -8,15 +8,16 @@ de verificación en vivo por WebSocket.
 import os
 import re
 import sys
+import secrets
 import asyncio
 import sqlite3
 from pathlib import Path
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Header, Query, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 
 # ── Importar el motor (raíz del repo) ──
 ENGINE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -54,9 +55,52 @@ def init_vault():
                 note TEXT DEFAULT '', saved_at TEXT
             )
         """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS api_keys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key TEXT UNIQUE NOT NULL,
+                label TEXT DEFAULT '',
+                active INTEGER DEFAULT 1,
+                requests INTEGER DEFAULT 0,
+                created_at TEXT,
+                last_used TEXT
+            )
+        """)
 
 
 init_vault()
+
+
+def _key_to_dict(row, mask=False):
+    d = dict(row)
+    if mask and d.get("key"):
+        k = d["key"]
+        d["key"] = k[:10] + "…" + k[-4:]
+    return d
+
+
+def validate_key(k: str):
+    with _db() as c:
+        row = c.execute("SELECT * FROM api_keys WHERE key=? AND active=1", (k,)).fetchone()
+        if row:
+            c.execute("UPDATE api_keys SET requests=requests+1, last_used=? WHERE id=?",
+                      (datetime.now(timezone.utc).isoformat(), row["id"]))
+            return dict(row)
+    return None
+
+
+async def require_key(x_api_key: str = Header(None), key: str = Query(None)):
+    k = x_api_key or key
+    if not k:
+        raise HTTPException(401, "API key requerida (header 'X-API-Key' o ?key=...)")
+    row = validate_key(k)
+    if not row:
+        raise HTTPException(403, "API key inválida o revocada")
+    return row
+
+
+# Estado de rotación en memoria (round-robin por filtro)
+_rot_idx = {}
 
 
 def _vault_rows():
@@ -225,6 +269,114 @@ async def vault_clear():
     with _db() as c:
         c.execute("DELETE FROM vault")
     return {"ok": True, "total": 0}
+
+
+@app.post("/api/vault/refresh")
+async def vault_refresh(payload: dict = None):
+    """Escaneo rápido (APIs, solo vida) y agrega las vivas al baúl. Mantiene el rotador fresco."""
+    payload = payload or {}
+    limit = int(payload.get("limit", 600))
+    engine.Config.MAX_CONCURRENT = 500
+    proxies = await fetch_proxies("api")
+    if limit and limit < len(proxies):
+        import random
+        items = list(proxies.items()); random.shuffle(items)
+        proxies = dict(items[:limit])
+    stats = engine.Stats()
+    checker = engine.ProxyChecker(stats, test_targets=[])
+    await checker.check_all(proxies)
+    now = datetime.now(timezone.utc).isoformat()
+    added = 0
+    with _db() as c:
+        for r in checker.results:
+            d = r.to_dict()
+            try:
+                c.execute(
+                    "INSERT OR IGNORE INTO vault (address, protocol, score, quality, anon_level, country, latency_ms, note, saved_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?)",
+                    (d["address"], d["protocol"], d["score"], d["quality"], d["anon_level"],
+                     d["country"], d["latency_ms"], "auto", now),
+                )
+                if c.total_changes:
+                    added += 1
+            except Exception:
+                continue
+    return {"ok": True, "checked": stats.checked, "alive": stats.alive, "added": added, "total": len(_vault_rows())}
+
+
+# ══════════════════════════════════════════════════════════════
+#   ROTADOR EN VIVO (gated por API key) — para vender acceso
+# ══════════════════════════════════════════════════════════════
+@app.get("/api/proxy")
+async def rotate_proxy(
+    protocol: str = Query(None),
+    min_score: int = Query(0),
+    country: str = Query(None),
+    format: str = Query("json"),
+    keyrow: dict = Depends(require_key),
+):
+    """Devuelve el SIGUIENTE proxy del baúl (round-robin) según filtros. Requiere API key."""
+    rows = _vault_rows()
+    rows = [r for r in rows if r["score"] >= min_score]
+    if protocol:
+        rows = [r for r in rows if r["protocol"] == protocol]
+    if country:
+        rows = [r for r in rows if r["country"] == country]
+    if not rows:
+        raise HTTPException(404, "No hay proxies en el baúl que cumplan el filtro")
+
+    sig = f"{protocol}|{min_score}|{country}"
+    i = _rot_idx.get(sig, 0)
+    proxy = rows[i % len(rows)]
+    _rot_idx[sig] = (i + 1) % len(rows)
+
+    if format == "text":
+        return PlainTextResponse(f"{proxy['protocol']}://{proxy['address']}")
+    return {
+        "proxy": f"{proxy['protocol']}://{proxy['address']}",
+        "address": proxy["address"], "protocol": proxy["protocol"],
+        "score": proxy["score"], "quality": proxy["quality"],
+        "anon_level": proxy["anon_level"], "country": proxy["country"],
+        "latency_ms": proxy["latency_ms"], "pool_size": len(rows),
+    }
+
+
+# ══════════════════════════════════════════════════════════════
+#   API KEYS (panel admin — protégelo antes de exponer en producción)
+# ══════════════════════════════════════════════════════════════
+@app.get("/api/keys")
+async def keys_list():
+    with _db() as c:
+        rows = c.execute("SELECT * FROM api_keys ORDER BY created_at DESC").fetchall()
+    return {"keys": [dict(r) for r in rows]}
+
+
+@app.post("/api/keys")
+async def keys_create(payload: dict = None):
+    label = (payload or {}).get("label", "").strip() or "sin nombre"
+    new_key = "pck_" + secrets.token_urlsafe(24)
+    now = datetime.now(timezone.utc).isoformat()
+    with _db() as c:
+        c.execute("INSERT INTO api_keys (key, label, created_at) VALUES (?,?,?)", (new_key, label, now))
+    return {"ok": True, "key": new_key, "label": label}
+
+
+@app.delete("/api/keys/{kid}")
+async def keys_delete(kid: int):
+    with _db() as c:
+        c.execute("DELETE FROM api_keys WHERE id=?", (kid,))
+    return {"ok": True}
+
+
+@app.post("/api/keys/{kid}/toggle")
+async def keys_toggle(kid: int):
+    with _db() as c:
+        row = c.execute("SELECT active FROM api_keys WHERE id=?", (kid,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Key no encontrada")
+        new = 0 if row["active"] else 1
+        c.execute("UPDATE api_keys SET active=? WHERE id=?", (new, kid))
+    return {"ok": True, "active": new}
 
 
 @app.websocket("/api/ws/check")

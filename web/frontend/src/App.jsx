@@ -8,6 +8,8 @@ import CleanList from './CleanList.jsx';
 import Dashboard from './Dashboard.jsx';
 import Vault from './Vault.jsx';
 import Guide from './Guide.jsx';
+import Rotator from './Rotator.jsx';
+import ApiKeys from './ApiKeys.jsx';
 
 const SOURCES = [
   { v: 'all', label: '🌐 Todas las fuentes (~20k)' },
@@ -61,8 +63,19 @@ export default function App() {
 
   const [tab, setTab] = useState('checker');
   const [vault, setVault] = useState([]);
+  const [keys, setKeys] = useState([]);
   const [savedMsg, setSavedMsg] = useState('');
   const wsRef = useRef(null);
+
+  const reloadKeys = useCallback(async () => {
+    try {
+      const r = await fetch('/api/keys');
+      const d = await r.json();
+      setKeys(d.keys || []);
+    } catch {}
+  }, []);
+
+  useEffect(() => { reloadKeys(); }, [reloadKeys]);
 
   const reloadVault = useCallback(async () => {
     try {
@@ -202,6 +215,8 @@ export default function App() {
         <button className={tab === 'clean' ? 'tab on' : 'tab'} onClick={() => setTab('clean')}>🧹 Limpiar lista</button>
         <button className={tab === 'dashboard' ? 'tab on' : 'tab'} onClick={() => setTab('dashboard')}>📊 Dashboard</button>
         <button className={tab === 'vault' ? 'tab on' : 'tab'} onClick={() => setTab('vault')}>🗄️ Baúl</button>
+        <button className={tab === 'rotator' ? 'tab on' : 'tab'} onClick={() => setTab('rotator')}>🔄 Rotador</button>
+        <button className={tab === 'keys' ? 'tab on' : 'tab'} onClick={() => setTab('keys')}>🔑 API Keys</button>
         <button className={tab === 'guide' ? 'tab on' : 'tab'} onClick={() => setTab('guide')}>📖 Guía</button>
       </nav>
 
@@ -210,6 +225,8 @@ export default function App() {
         {tab === 'clean' && <CleanList />}
         {tab === 'dashboard' && <Dashboard results={results} />}
         {tab === 'vault' && <Vault vault={vault} reloadVault={reloadVault} />}
+        {tab === 'rotator' && <Rotator keys={keys} vaultCount={vault.length} reloadVault={reloadVault} />}
+        {tab === 'keys' && <ApiKeys keys={keys} reloadKeys={reloadKeys} />}
         {tab === 'guide' && <Guide />}
 
         {tab === 'checker' && <>

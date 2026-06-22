@@ -1,0 +1,15 @@
+Web v1.3: rotador en vivo + API keys (monetizacion) + refresh del baul
+
+- Rotador: GET /api/proxy entrega una proxy distinta por peticion
+  (round-robin) con filtros protocolo/min_score/country y format json|text.
+  Gated por API key. UI con endpoint, preview en vivo y snippets.
+- API Keys: tabla api_keys (SQLite), CRUD (crear/pausar/revocar), contador
+  de requests y ultimo uso. Panel para vender acceso por cliente.
+- Refrescar baul: POST /api/vault/refresh hace un escaneo rapido y agrega
+  las vivas al baul, manteniendo el rotador fresco.
+- README: seccion de monetizacion.
+
+Nota: endpoints /api/keys* (admin) abiertos para uso local; proteger antes
+de exponer en internet.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
