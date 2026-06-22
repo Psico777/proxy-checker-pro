@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+env/
+
+# Results & outputs
+results/
+*_alive_*.txt
+proxy_debug.html
+debug_response.html
+
+# Local proxy lists (user content)
+prox.txt
+proxis.txt
+proxies.txt
+p1.txt
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
