@@ -18,8 +18,16 @@ proxis.txt
 proxies.txt
 p1.txt
 
+# Node / frontend
+node_modules/
+web/frontend/node_modules/
+web/frontend/dist/
+.vite/
+
 # IDE / OS
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+.playwright-mcp/
+pc-*.png

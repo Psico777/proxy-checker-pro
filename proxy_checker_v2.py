@@ -47,7 +47,6 @@ colorama.init()
 # ══════════════════════════════════════════════════════════════
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-os.chdir(SCRIPT_DIR)
 
 RESULTS_DIR = os.path.join(SCRIPT_DIR, "results")
 os.makedirs(RESULTS_DIR, exist_ok=True)
@@ -63,9 +62,6 @@ def _handle_sigint(sig, frame):
         sys.exit(1)
     _STOP_REQUESTED = True
     print(f"\n{Fore.LIGHTYELLOW_EX}  [!] Ctrl+C detectado — finalizando tareas actuales y guardando...{Fore.RESET}")
-
-
-signal.signal(signal.SIGINT, _handle_sigint)
 
 
 def safe_input(prompt: str, default: str = "") -> str:
@@ -191,6 +187,8 @@ class ProxyResult:
         d['protocol'] = self.protocol.value
         d['anon_level'] = self.anon_level.value
         d['quality'] = self.quality.value
+        d['address'] = self.address
+        d['url'] = self.url
         return d
 
 
@@ -1327,6 +1325,9 @@ async def async_main():
 
 
 def main():
+    # Side effects solo en modo CLI (no al importar como librería para la web)
+    os.chdir(SCRIPT_DIR)
+    signal.signal(signal.SIGINT, _handle_sigint)
     try:
         asyncio.run(async_main())
     except KeyboardInterrupt:

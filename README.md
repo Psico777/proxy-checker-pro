@@ -97,6 +97,24 @@ geo    = pool.get_next(country="US", min_score=40)        # por país
 
 ---
 
+## 🖥️ Versión Web (interfaz visual)
+
+Además del CLI, incluye una **web app** con interfaz visual y **progreso en vivo** vía WebSocket — ideal para usar sin terminal o para ofrecer como servicio.
+
+```bash
+cd web/backend && pip install -r requirements.txt && python -m uvicorn main:app --port 8000
+cd web/frontend && npm install && npm run dev    # http://localhost:5174
+# o build para producción:
+cd web/frontend && npm run build                 # luego abre http://localhost:8000
+```
+
+- **Backend FastAPI** que reutiliza el mismo motor (`proxy_checker_v2.py`)
+- **WebSocket** con barra de progreso, contadores y proxies apareciendo en tiempo real
+- **Tabla filtrable** por protocolo / calidad / país + búsqueda
+- **Export** TXT / CSV / JSON desde el navegador
+- **Botón Detener** que guarda lo encontrado hasta el momento
+- Tema oscuro profesional · React 19 + Vite
+
 ## 🗺️ Documentación
 
 - **[GUIA_DE_USO.md](GUIA_DE_USO.md)** — qué tipo de proxy usar para cada caso (scraping, automatización, testing) e integración con Scrapy, Selenium, curl.

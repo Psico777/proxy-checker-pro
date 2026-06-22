@@ -1,0 +1,215 @@
+"""
+Proxy Checker Pro - Web Backend (FastAPI + WebSocket)
+=====================================================
+Envuelve el motor async `proxy_checker_v2` y transmite el progreso
+de verificación en vivo por WebSocket.
+"""
+
+import os
+import re
+import sys
+import asyncio
+from pathlib import Path
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+# ── Importar el motor (raíz del repo) ──
+ENGINE_DIR = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(ENGINE_DIR))
+import proxy_checker_v2 as engine  # noqa: E402
+
+app = FastAPI(title="Proxy Checker Pro - Web", version="1.0.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ── Mapeo de targets (igual que el CLI) ──
+def resolve_targets(tests: str, custom_url: str = "") -> list:
+    if tests == "alive":
+        return []
+    if tests == "google":
+        return ["google.com", "cloudflare"]
+    if tests == "hq":
+        return list(engine.Config.HQ_TEST_URLS.keys())
+    if tests == "custom":
+        url = custom_url or "https://www.google.com/"
+        if not url.startswith("http"):
+            url = "https://" + url
+        return [f"custom:{url}"]
+    return []
+
+
+def parse_pasted(text: str) -> dict:
+    """Parsea proxies pegadas (una por línea, detecta protocolo por prefijo)."""
+    proxies = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        m = re.search(r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d+)', line)
+        if not m:
+            continue
+        ip, port = m.group(1), m.group(2)
+        if not engine._valid_ip(ip) or not (1 <= int(port) <= 65535):
+            continue
+        addr = f"{ip}:{port}"
+        low = line.lower()
+        if "socks5" in low:
+            proto = engine.ProxyProtocol.SOCKS5
+        elif "socks4" in low:
+            proto = engine.ProxyProtocol.SOCKS4
+        elif "https" in low:
+            proto = engine.ProxyProtocol.HTTPS
+        else:
+            proto = engine.ProxyProtocol.HTTP
+        proxies[addr] = proto
+    return proxies
+
+
+async def fetch_proxies(source: str, pasted: str = "") -> dict:
+    P = engine.ProxyProtocol
+    if source == "paste":
+        return parse_pasted(pasted)
+    if source == "http":
+        return await engine.ProxyFetcher.fetch_all(protocols_filter={P.HTTP, P.HTTPS})
+    if source == "socks":
+        return await engine.ProxyFetcher.fetch_all(protocols_filter={P.SOCKS4, P.SOCKS5})
+    if source == "api":
+        return await engine.ProxyFetcher.fetch_all(source_type_filter="api")
+    if source == "github":
+        return await engine.ProxyFetcher.fetch_all(source_type_filter="github")
+    return await engine.ProxyFetcher.fetch_all()
+
+
+@app.get("/api/health")
+async def health():
+    return {"status": "ok", "engine": "proxy_checker_v2", "version": "1.0.0"}
+
+
+@app.websocket("/api/ws/check")
+async def ws_check(ws: WebSocket):
+    await ws.accept()
+    # Reset stop flag for this run
+    engine._STOP_REQUESTED = False
+    try:
+        params = await ws.receive_json()
+        source = params.get("source", "all")
+        tests = params.get("tests", "hq")
+        concurrency = int(params.get("concurrency", 500))
+        limit = int(params.get("limit", 0))
+        pasted = params.get("pasted", "")
+        custom_url = params.get("custom_url", "")
+
+        await ws.send_json({"type": "status", "msg": "Obteniendo proxies..."})
+
+        proxies = await fetch_proxies(source, pasted)
+        if not proxies:
+            await ws.send_json({"type": "error", "msg": "No se obtuvieron proxies de esa fuente"})
+            await ws.close()
+            return
+
+        # Limitar (muestra aleatoria)
+        if limit and limit < len(proxies):
+            import random
+            items = list(proxies.items())
+            random.shuffle(items)
+            proxies = dict(items[:limit])
+
+        engine.Config.MAX_CONCURRENT = max(50, min(concurrency, 2000))
+        targets = resolve_targets(tests, custom_url)
+
+        await ws.send_json({
+            "type": "started",
+            "total": len(proxies),
+            "targets": targets or ["solo vida"],
+            "concurrency": engine.Config.MAX_CONCURRENT,
+        })
+
+        stats = engine.Stats()
+        checker = engine.ProxyChecker(stats, test_targets=targets)
+        task = asyncio.create_task(checker.check_all(proxies))
+
+        last_sent = 0
+        # Escuchar mensajes de "stop" en paralelo
+        async def listen_stop():
+            try:
+                while True:
+                    msg = await ws.receive_json()
+                    if msg.get("action") == "stop":
+                        engine._STOP_REQUESTED = True
+                        return
+            except Exception:
+                return
+        stop_listener = asyncio.create_task(listen_stop())
+
+        while not task.done():
+            await asyncio.sleep(0.4)
+            new = checker.results[last_sent:]
+            last_sent = len(checker.results)
+            await ws.send_json({
+                "type": "progress",
+                "checked": stats.checked,
+                "alive": stats.alive,
+                "dead": stats.dead,
+                "total": stats.total,
+                "speed": round(stats.speed, 1),
+                "premium": stats.premium,
+                "high": stats.high,
+                "new": [r.to_dict() for r in new],
+            })
+
+        await task
+        stop_listener.cancel()
+
+        # Enviar lo que falte + resumen final
+        new = checker.results[last_sent:]
+        results = checker.results
+        pool = engine.ProxyPool(results) if results else None
+        summary = pool.summary if pool else {}
+
+        await ws.send_json({
+            "type": "done",
+            "checked": stats.checked,
+            "alive": stats.alive,
+            "dead": stats.dead,
+            "total": stats.total,
+            "elapsed": round(stats.elapsed, 1),
+            "new": [r.to_dict() for r in new],
+            "summary": summary,
+            "stopped": engine._STOP_REQUESTED,
+        })
+    except WebSocketDisconnect:
+        engine._STOP_REQUESTED = True
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        try:
+            await ws.send_json({"type": "error", "msg": str(e)})
+        except Exception:
+            pass
+    finally:
+        try:
+            await ws.close()
+        except Exception:
+            pass
+
+
+# ── Servir el frontend compilado (si existe) ──
+FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+if FRONTEND_DIST.exists():
+    app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="assets")
+
+    @app.get("/")
+    async def index():
+        return FileResponse(FRONTEND_DIST / "index.html")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
