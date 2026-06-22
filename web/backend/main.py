@@ -9,7 +9,9 @@ import os
 import re
 import sys
 import asyncio
+import sqlite3
 from pathlib import Path
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,13 +23,46 @@ ENGINE_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ENGINE_DIR))
 import proxy_checker_v2 as engine  # noqa: E402
 
-app = FastAPI(title="Proxy Checker Pro - Web", version="1.0.0")
+app = FastAPI(title="Proxy Checker Pro - Web", version="1.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ══════════════════════════════════════════════════════════════
+#   BAÚL DE PROXIES (persistencia SQLite)
+# ══════════════════════════════════════════════════════════════
+VAULT_DB = str(Path(__file__).resolve().parent / "vault.db")
+
+
+def _db():
+    conn = sqlite3.connect(VAULT_DB)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_vault():
+    with _db() as c:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS vault (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                address TEXT UNIQUE NOT NULL,
+                protocol TEXT, score INTEGER, quality TEXT,
+                anon_level TEXT, country TEXT, latency_ms REAL,
+                note TEXT DEFAULT '', saved_at TEXT
+            )
+        """)
+
+
+init_vault()
+
+
+def _vault_rows():
+    with _db() as c:
+        rows = c.execute("SELECT * FROM vault ORDER BY score DESC, saved_at DESC").fetchall()
+    return [dict(r) for r in rows]
 
 # ── Mapeo de targets (igual que el CLI) ──
 def resolve_targets(tests: str, custom_url: str = "") -> list:
@@ -140,6 +175,56 @@ async def clean_list(payload: dict):
         "plain": plain,
         "prefixed": prefixed,
     }
+
+
+# ── BAÚL: endpoints ──
+@app.get("/api/vault")
+async def vault_list():
+    rows = _vault_rows()
+    return {"total": len(rows), "proxies": rows}
+
+
+@app.post("/api/vault")
+async def vault_add(payload: dict):
+    """Guarda uno o varios proxies en el baúl (dedup por address)."""
+    items = (payload or {}).get("proxies", [])
+    if isinstance(items, dict):
+        items = [items]
+    now = datetime.now(timezone.utc).isoformat()
+    added = 0
+    with _db() as c:
+        for p in items:
+            addr = p.get("address") or f"{p.get('ip','')}:{p.get('port','')}"
+            if not addr or ":" not in addr:
+                continue
+            try:
+                c.execute(
+                    "INSERT OR IGNORE INTO vault (address, protocol, score, quality, anon_level, country, latency_ms, note, saved_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?)",
+                    (addr, p.get("protocol", ""), int(p.get("score", 0) or 0), p.get("quality", ""),
+                     p.get("anon_level", ""), p.get("country", ""), float(p.get("latency_ms", 0) or 0),
+                     p.get("note", ""), now),
+                )
+                if c.total_changes:
+                    added += 1
+            except Exception:
+                continue
+    rows = _vault_rows()
+    return {"ok": True, "added": added, "total": len(rows), "proxies": rows}
+
+
+@app.delete("/api/vault/{pid}")
+async def vault_delete(pid: int):
+    with _db() as c:
+        c.execute("DELETE FROM vault WHERE id=?", (pid,))
+    return {"ok": True, "total": len(_vault_rows())}
+
+
+@app.delete("/api/vault")
+async def vault_clear():
+    with _db() as c:
+        c.execute("DELETE FROM vault")
+    return {"ok": True, "total": 0}
 
 
 @app.websocket("/api/ws/check")

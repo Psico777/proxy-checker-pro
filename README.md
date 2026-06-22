@@ -108,11 +108,15 @@ cd web/frontend && npm install && npm run dev    # http://localhost:5174
 cd web/frontend && npm run build                 # luego abre http://localhost:8000
 ```
 
+**6 herramientas en pestañas:**
+- 🔍 **Checker masivo** — WebSocket con progreso en vivo, tabla filtrable (protocolo/calidad/país), export TXT/CSV/JSON, botón detener
+- ⚡ **Test rápido** — verifica UN proxy al instante (vida, latencia, anonimato, país, score)
+- 🧹 **Limpiar lista** — deduplica, valida IPs y normaliza formato de listas desordenadas
+- 📊 **Dashboard** — KPIs y gráficos (por protocolo, calidad, top países, anonimato)
+- 🗄️ **Baúl** — guarda tus mejores proxies de forma persistente (SQLite) y reúsalas / expórtalas
+- 📖 **Guía** — qué es, para qué sirve, qué proxy usar y cómo integrarlas (cURL/Python/Scrapy)
+
 - **Backend FastAPI** que reutiliza el mismo motor (`proxy_checker_v2.py`)
-- **WebSocket** con barra de progreso, contadores y proxies apareciendo en tiempo real
-- **Tabla filtrable** por protocolo / calidad / país + búsqueda
-- **Export** TXT / CSV / JSON desde el navegador
-- **Botón Detener** que guarda lo encontrado hasta el momento
 - Tema oscuro profesional · React 19 + Vite
 
 ## 🗺️ Documentación
