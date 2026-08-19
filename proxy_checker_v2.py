@@ -150,10 +150,10 @@ class AnonLevel(Enum):
 
 
 class QualityTier(Enum):
-    PREMIUM  = "⭐ PREMIUM"
-    HIGH     = "🟢 HIGH"
-    MEDIUM   = "🟡 MEDIUM"
-    LOW      = "🔴 LOW"
+    PREMIUM  = "PREMIUM"
+    HIGH     = "HIGH"
+    MEDIUM   = "MEDIUM"
+    LOW      = "LOW"
 
 
 @dataclass
